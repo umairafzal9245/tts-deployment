@@ -1,0 +1,92 @@
+version: "3.8"
+
+services:
+  qwen3-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qwen3-tts-server:latest
+    container_name: qwen3-tts-server
+    runtime: nvidia
+    restart: unless-stopped
+    shm_size: 32gb
+    ipc: host
+    privileged: true
+    ports:
+      - "${SGLANG_OMNI_PORT:-8000}:8000"
+    environment:
+      # Model and config
+      SGLANG_OMNI_MODEL_PATH: ${SGLANG_OMNI_MODEL_PATH:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}
+      SGLANG_OMNI_CONFIG: ${SGLANG_OMNI_CONFIG:-/app/config/qwen3_tts_0_6b.yaml}
+
+      # Server binding
+      SGLANG_OMNI_HOST: ${SGLANG_OMNI_HOST:-0.0.0.0}
+      SGLANG_OMNI_PORT: ${SGLANG_OMNI_PORT:-8000}
+      SGLANG_OMNI_LOG_LEVEL: ${SGLANG_OMNI_LOG_LEVEL:-info}
+
+      # SGLang runtime tuning
+      SGLANG_OMNI_MAX_RUNNING_REQUESTS: ${SGLANG_OMNI_MAX_RUNNING_REQUESTS:-16}
+      SGLANG_OMNI_CUDA_GRAPH_MAX_BS: ${SGLANG_OMNI_CUDA_GRAPH_MAX_BS:-32}
+      SGLANG_OMNI_TTS_BATCH_MAX_ITEMS: ${SGLANG_OMNI_TTS_BATCH_MAX_ITEMS:-32}
+      SGLANG_OMNI_STARTUP_TIMEOUT: ${SGLANG_OMNI_STARTUP_TIMEOUT:-600}
+
+      # Reference audio domain allowlist (empty = allow all public domains)
+      SGLANG_OMNI_ALLOWED_MEDIA_DOMAIN: ${SGLANG_OMNI_ALLOWED_MEDIA_DOMAIN:-}
+
+      # Hugging Face / cache
+      HF_HOME: /data/hf-cache
+      HUGGINGFACE_HUB_CACHE: /data/hf-cache
+      TRANSFORMERS_CACHE: /data/hf-cache
+      HF_TOKEN: ${HF_TOKEN:-}
+
+      # Uploaded voices persistence
+      SGLANG_OMNI_SPEAKER_SAMPLES_DIR: /data/voices
+
+      # Logging
+      SGLANG_OMNI_LOG_DIR: /data/logs
+      SGLANG_OMNI_TMP_DIR: /data/tmp
+
+      # Warmup
+      SGLANG_OMNI_WARMUP_ENABLED: ${SGLANG_OMNI_WARMUP_ENABLED:-1}
+      SGLANG_OMNI_WARMUP_TIMEOUT: ${SGLANG_OMNI_WARMUP_TIMEOUT:-300}
+
+      # Python
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      # Persist Hugging Face model cache across restarts
+      - hf-cache:/data/hf-cache
+      # Persist uploaded voice profiles across restarts
+      - voices:/data/voices
+      # Persist logs on the host
+      - logs:/data/logs
+      # Temporary workspace
+      - tmp:/data/tmp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+
+volumes:
+  hf-cache:
+    driver: local
+  voices:
+    driver: local
+  logs:
+    driver: local
+  tmp:
+    driver: local

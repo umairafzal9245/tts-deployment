@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+*.log
+logs/
+tmp/
+*.tmp
+
+# Build artifacts
+openapi.json
+*.wav
+*.mp3
+*.pcm
+
+# Documentation (keep README in context, but not needed inside image)
+# README.md is small; leave it available for reference.

@@ -1,0 +1,6 @@
+# SGLang-Omni pipeline configuration for Qwen3-TTS 0.6B
+# Reference: https://github.com/sgl-project/sglang-omni/blob/main/examples/configs/qwen3_tts_0_6b.yaml
+
+config_cls: Qwen3TTSPipelineConfig
+model_path: Qwen/Qwen3-TTS-12Hz-0.6B-Base
+relay_backend: shm
