@@ -10,9 +10,18 @@ set -euo pipefail
 : "${SGLANG_OMNI_MODEL_PATH:=Qwen/Qwen3-TTS-12Hz-0.6B-Base}"
 : "${SGLANG_OMNI_CONFIG:=/app/config/qwen3_tts_0_6b.yaml}"
 : "${SGLANG_OMNI_LOG_LEVEL:=info}"
-: "${SGLANG_OMNI_MAX_RUNNING_REQUESTS:=16}"
-: "${SGLANG_OMNI_CUDA_GRAPH_MAX_BS:=32}"
+# L40S-optimized defaults (48 GB GDDR6, Ada Lovelace SM89).
+# 0.6B model (~1.2 GB) leaves ~46 GB for KV cache + activations.
+# The model is memory-bound, so per-step AR latency is nearly flat up to
+# batch 128. The real bottleneck is the vocoder (default max_batch_size=8),
+# which we override to 64 to avoid queueing when many requests finish AR
+# simultaneously.
+: "${SGLANG_OMNI_MAX_RUNNING_REQUESTS:=100}"
+: "${SGLANG_OMNI_CUDA_GRAPH_MAX_BS:=128}"
+: "${SGLANG_OMNI_MEM_FRACTION_STATIC:=0.88}"
 : "${SGLANG_OMNI_TTS_BATCH_MAX_ITEMS:=32}"
+: "${SGLANG_OMNI_VOCODER_MAX_BATCH_SIZE:=64}"
+: "${SGLANG_OMNI_VOCODER_MAX_BATCH_WAIT_MS:=5}"
 : "${SGLANG_OMNI_STARTUP_TIMEOUT:=600}"
 : "${SGLANG_OMNI_WARMUP_ENABLED:=1}"
 : "${SGLANG_OMNI_WARMUP_TIMEOUT:=300}"
@@ -81,17 +90,42 @@ fi
 # Build sgl-omni serve command
 # ---------------------------------------------------------------------------
 # The native CLI is: sgl-omni serve --config <yaml> --host <host> --port <port>
-# We rely on the YAML for pipeline/model configuration.
+# We rely on the YAML for pipeline/model configuration, but also forward
+# runtime tuning flags so that .env overrides actually take effect.
 CMD_ARGS=(
     "serve"
     "--config" "$SGLANG_OMNI_CONFIG"
     "--host" "$SGLANG_OMNI_HOST"
     "--port" "$SGLANG_OMNI_PORT"
     "--log-level" "$SGLANG_OMNI_LOG_LEVEL"
+    "--max-running-requests" "$SGLANG_OMNI_MAX_RUNNING_REQUESTS"
+    "--cuda-graph-max-bs" "$SGLANG_OMNI_CUDA_GRAPH_MAX_BS"
+    "--tts-batch-max-items" "$SGLANG_OMNI_TTS_BATCH_MAX_ITEMS"
+    "--mem-fraction-static" "$SGLANG_OMNI_MEM_FRACTION_STATIC"
+    # Override vocoder batch size (stage index 2 in Qwen3-TTS pipeline).
+    # Default is 8, which causes queueing when many requests finish AR
+    # simultaneously. Raising to 64 eliminates the vocoder bottleneck.
+    "--stages.2.factory-args.max_batch_size" "$SGLANG_OMNI_VOCODER_MAX_BATCH_SIZE"
+    "--stages.2.factory-args.max_batch_wait_ms" "$SGLANG_OMNI_VOCODER_MAX_BATCH_WAIT_MS"
 )
 
-# Optional: pass model path if the CLI supports --model-path
-# (sgl-omni serve uses the YAML; this is a fallback override)
+# Forward model path override if it differs from the YAML default
+if [[ -n "${SGLANG_OMNI_MODEL_PATH:-}" ]]; then
+    CMD_ARGS+=("--model-path" "$SGLANG_OMNI_MODEL_PATH")
+fi
+
+# Forward allowed media domain allowlist (repeatable flag)
+if [[ -n "${SGLANG_OMNI_ALLOWED_MEDIA_DOMAIN:-}" ]]; then
+    # Support comma-separated list
+    IFS=',' read -ra _DOMAINS <<< "$SGLANG_OMNI_ALLOWED_MEDIA_DOMAIN"
+    for _domain in "${_DOMAINS[@]}"; do
+        _domain="${_domain## }"
+        _domain="${_domain%% }"
+        [[ -n "$_domain" ]] && CMD_ARGS+=("--allowed-media-domain" "$_domain")
+    done
+fi
+
+# Resolve the sgl-omni binary (prefer the entrypoint script, fall back to module)
 if command -v sgl-omni &>/dev/null; then
     SGLANG_OMNI_BIN="sgl-omni"
 else

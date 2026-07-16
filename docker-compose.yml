@@ -11,7 +11,6 @@ services:
     restart: unless-stopped
     shm_size: 32gb
     ipc: host
-    privileged: true
     ports:
       - "${SGLANG_OMNI_PORT:-8000}:8000"
     environment:
@@ -24,10 +23,13 @@ services:
       SGLANG_OMNI_PORT: ${SGLANG_OMNI_PORT:-8000}
       SGLANG_OMNI_LOG_LEVEL: ${SGLANG_OMNI_LOG_LEVEL:-info}
 
-      # SGLang runtime tuning
-      SGLANG_OMNI_MAX_RUNNING_REQUESTS: ${SGLANG_OMNI_MAX_RUNNING_REQUESTS:-16}
-      SGLANG_OMNI_CUDA_GRAPH_MAX_BS: ${SGLANG_OMNI_CUDA_GRAPH_MAX_BS:-32}
+      # SGLang runtime tuning (L40S-optimized defaults)
+      SGLANG_OMNI_MAX_RUNNING_REQUESTS: ${SGLANG_OMNI_MAX_RUNNING_REQUESTS:-100}
+      SGLANG_OMNI_CUDA_GRAPH_MAX_BS: ${SGLANG_OMNI_CUDA_GRAPH_MAX_BS:-128}
+      SGLANG_OMNI_MEM_FRACTION_STATIC: ${SGLANG_OMNI_MEM_FRACTION_STATIC:-0.88}
       SGLANG_OMNI_TTS_BATCH_MAX_ITEMS: ${SGLANG_OMNI_TTS_BATCH_MAX_ITEMS:-32}
+      SGLANG_OMNI_VOCODER_MAX_BATCH_SIZE: ${SGLANG_OMNI_VOCODER_MAX_BATCH_SIZE:-64}
+      SGLANG_OMNI_VOCODER_MAX_BATCH_WAIT_MS: ${SGLANG_OMNI_VOCODER_MAX_BATCH_WAIT_MS:-5}
       SGLANG_OMNI_STARTUP_TIMEOUT: ${SGLANG_OMNI_STARTUP_TIMEOUT:-600}
 
       # Reference audio domain allowlist (empty = allow all public domains)
@@ -69,6 +71,9 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+        limits:
+          cpus: "${SGLANG_OMNI_CPU_LIMIT:-16}"
+          memory: "${SGLANG_OMNI_MEMORY_LIMIT:-64G}"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s
