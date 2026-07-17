@@ -1,0 +1,10 @@
+# SGLang-Omni pipeline config for MOSS-TTS-Local v1.5
+#
+# Streaming TTS pipeline with low-latency first-chunk vocoder.
+# The vocoder uses initial_chunk_frames=1 for minimal TTFC.
+# torch.compile is OFF by default for this model.
+# Model: OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5
+
+config_cls: MossTTSLocalPipelineConfig
+model_path: OpenMOSS-Team/MOSS-TTS-Local-Transformer-v1.5
+relay_backend: shm

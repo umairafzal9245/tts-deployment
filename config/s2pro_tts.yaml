@@ -1,0 +1,39 @@
+# SGLang-Omni pipeline config for FishAudio S2-Pro TTS
+#
+# Streaming TTS pipeline with stream_stride=10 (very low TTFT).
+# Model: fishaudio/s2-pro
+#
+# Performance tuning via server_args_overrides:
+#   - attention_backend: flashinfer (fast attention)
+#   - schedule_conservativeness: 1.2 (slightly conservative scheduling)
+#   - page_size: 1 (minimal KV cache page granularity)
+
+config_cls: S2ProPipelineConfig
+model_path: fishaudio/s2-pro
+relay_backend: shm
+
+stages:
+  - name: preprocessing
+    process: preprocessing
+    factory: sglang_omni.models.fishaudio_s2_pro.stages.create_preprocessing_executor
+    next: tts_engine
+  - name: tts_engine
+    process: pipeline
+    factory: sglang_omni.models.fishaudio_s2_pro.stages.create_sglang_tts_engine_executor
+    factory_args:
+      device: cuda:0
+      max_new_tokens: 2048
+      server_args_overrides:
+        attention_backend: flashinfer
+        schedule_conservativeness: 1.2
+        page_size: 1
+    gpu: 0
+    next: vocoder
+    stream_to:
+      - vocoder
+  - name: vocoder
+    process: pipeline
+    factory: sglang_omni.models.fishaudio_s2_pro.stages.create_vocoder_executor
+    gpu: 0
+    terminal: true
+    can_accept_stream_before_payload: true

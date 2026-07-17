@@ -1,0 +1,57 @@
+# SGLang-Omni pipeline configuration for Higgs TTS v3 (4B)
+#
+# Higgs TTS is a streaming TTS pipeline: the AR engine streams partial codec
+# tokens to the vocoder DURING generation (stream_to=["vocoder"]), and the
+# vocoder uses HiggsStreamingVocoderScheduler to decode incrementally.
+# This dramatically reduces time-to-first-audio vs Qwen3-TTS (which waits
+# for all AR tokens before vocoding).
+#
+# Model: bosonai/higgs-tts-3-4b (~8 GB bfloat16, 4B params)
+# Requires: 2 GPUs in CI, but colocated on 1 GPU works for single-GPU L40S.
+#
+# Async decode (enable_async_decode) enables one-step lookahead, overlapping
+# the previous step's host-side collect with the next GPU forward pass.
+
+config_cls: HiggsTtsPipelineConfig
+model_path: bosonai/higgs-tts-3-4b
+relay_backend: shm
+
+stages:
+  - name: preprocessing
+    process: pipeline
+    factory: sglang_omni.models.higgs_tts.stages.create_preprocessing_executor
+    next: audio_encoder
+  - name: audio_encoder
+    process: pipeline
+    factory: sglang_omni.models.higgs_tts.stages.create_audio_encoder_executor
+    factory_args:
+      device: cuda
+    gpu: 0
+    next: tts_engine
+  - name: tts_engine
+    process: pipeline
+    factory: sglang_omni.models.higgs_tts.stages.create_sglang_tts_engine_executor
+    factory_args:
+      device: cuda
+      max_new_tokens: 2048
+      enable_async_decode: true
+    gpu: 0
+    next: vocoder
+    stream_to:
+      - vocoder
+  - name: vocoder
+    process: pipeline
+    factory: sglang_omni.models.higgs_tts.stages.create_vocoder_executor
+    factory_args:
+      device: cuda
+      vocoder_decode_batch_size: 16
+      max_batch_wait_ms: 2
+      # Reduced from defaults (75/75/8/4) for faster first-chunk.
+      # stream_stride=24 means first audio after ~24 codec tokens (~2s audio).
+      stream_stride: 24
+      stream_followup_stride: 24
+      stream_overlap_tokens: 8
+      stream_holdback_tokens: 2
+    gpu: 0
+    terminal: true
+    can_accept_stream_before_payload: true

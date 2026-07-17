@@ -32,6 +32,12 @@ RUN git clone https://github.com/sgl-project/sglang-omni.git /app/sglang-omni &&
     uv pip install --no-deps qwen-tts==0.1.1 && \
     uv pip install --no-deps accelerate && \
     uv pip install sox einops onnxruntime librosa audioread && \
+    # Pin torch 2.11.0 in venv (system has 2.13.0 which breaks sgl-kernel 0.4.4 ABI).
+    # Also install matching torchvision so nms operator works for S2-Pro/Voxtral.
+    uv pip install --index-url https://download.pytorch.org/whl/cu130 --index-strategy unsafe-best-match \
+        "torch==2.11.0" "torchvision" && \
+    # S2-Pro (FishAudio) deps:
+    uv pip install hydra-core descript-audiotools && \
     sed -i 's/@check_model_inputs()/# @check_model_inputs()/g' /app/sglang-omni/.venv/lib/python3.12/site-packages/qwen_tts/core/tokenizer_12hz/modeling_qwen3_tts_tokenizer_v2.py
 
 # Copy deployment helpers into the image

@@ -101,12 +101,11 @@ CMD_ARGS=(
     "--max-running-requests" "$SGLANG_OMNI_MAX_RUNNING_REQUESTS"
     "--cuda-graph-max-bs" "$SGLANG_OMNI_CUDA_GRAPH_MAX_BS"
     "--tts-batch-max-items" "$SGLANG_OMNI_TTS_BATCH_MAX_ITEMS"
-    "--mem-fraction-static" "$SGLANG_OMNI_MEM_FRACTION_STATIC"
-    # Override vocoder batch size (stage index 2 in Qwen3-TTS pipeline).
-    # Default is 8, which causes queueing when many requests finish AR
-    # simultaneously. Raising to 64 eliminates the vocoder bottleneck.
-    "--stages.2.factory-args.max_batch_size" "$SGLANG_OMNI_VOCODER_MAX_BATCH_SIZE"
-    "--stages.2.factory-args.max_batch_wait_ms" "$SGLANG_OMNI_VOCODER_MAX_BATCH_WAIT_MS"
+    # mem_fraction_static is intentionally NOT forwarded: the Qwen3-TTS pipeline
+    # does not expose a CLI mem_fraction target in this sgl-omni version, and
+    # passing it causes a hard error. SGLang auto-picks a safe value.
+    # Vocoder batch size / wait are configured in the YAML (stages.vocoder
+    # factory_args), since this sgl-omni version has no --stages.* CLI flags.
 )
 
 # Forward model path override if it differs from the YAML default

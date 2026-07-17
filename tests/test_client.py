@@ -101,6 +101,15 @@ class TTSClient:
         response_format: str = "wav",
         sample_rate: int = 16000,
         stream: bool = False,
+        ref_audio: str | None = None,
+        ref_text: str | None = None,
+        language: str | None = None,
+        max_new_tokens: int = 256,
+        repetition_penalty: float = 1.1,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        seed: int | None = None,
     ):
         payload = {
             "model": "qwen3-tts",
@@ -109,7 +118,26 @@ class TTSClient:
             "response_format": response_format,
             "sample_rate": sample_rate,
             "stream": stream,
+            # Bound generation to prevent runaway output (~170s at the
+            # 2048-token default). 256 tokens ~= 21s ceiling.
+            "max_new_tokens": max_new_tokens,
+            # Slightly above the 1.05 default to suppress repetition loops.
+            "repetition_penalty": repetition_penalty,
         }
+        if ref_audio is not None:
+            payload["ref_audio"] = ref_audio
+        if ref_text is not None:
+            payload["ref_text"] = ref_text
+        if language is not None:
+            payload["language"] = language
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if top_k is not None:
+            payload["top_k"] = top_k
+        if seed is not None:
+            payload["seed"] = seed
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         return self._request("POST", "/v1/audio/speech", data=data, headers=headers)
@@ -140,6 +168,15 @@ def cmd_speak(client: TTSClient, args: argparse.Namespace) -> int:
         response_format=args.format,
         sample_rate=args.sample_rate,
         stream=args.stream,
+        ref_audio=args.ref_audio,
+        ref_text=args.ref_text,
+        language=args.language,
+        max_new_tokens=args.max_new_tokens,
+        repetition_penalty=args.repetition_penalty,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        seed=args.seed,
     )
     output = Path(args.output)
     if args.format == "pcm":
@@ -183,6 +220,15 @@ def main() -> int:
     speak_parser.add_argument("--sample-rate", type=int, default=16000)
     speak_parser.add_argument("--stream", action="store_true", help="Stream audio")
     speak_parser.add_argument("--output", default="output.wav", help="Output file path")
+    speak_parser.add_argument("--ref-audio", default=None, help="Path/URL to reference audio")
+    speak_parser.add_argument("--ref-text", default=None, help="Transcript of reference audio (must match!)")
+    speak_parser.add_argument("--language", default=None, help="Language hint (e.g. English)")
+    speak_parser.add_argument("--max-new-tokens", type=int, default=256, help="Max codec tokens (12 ~= 1s audio)")
+    speak_parser.add_argument("--repetition-penalty", type=float, default=1.1, help="Repetition penalty")
+    speak_parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature")
+    speak_parser.add_argument("--top-p", type=float, default=None, help="Top-p sampling")
+    speak_parser.add_argument("--top-k", type=int, default=None, help="Top-k sampling")
+    speak_parser.add_argument("--seed", type=int, default=None, help="Random seed")
 
     args = parser.parse_args()
     client = TTSClient(args.url)

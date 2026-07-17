@@ -1,12 +1,8 @@
-# SGLang-Omni pipeline configuration for Qwen3-TTS 0.6B
-# Reference: https://github.com/sgl-project/sglang-omni/blob/main/examples/configs/qwen3_tts_0_6b.yaml
+# SGLang-Omni pipeline configuration for Qwen3-TTS 0.6B (TTFT-optimized)
 #
-# The stages list mirrors Qwen3TTSPipelineConfig defaults, with the vocoder
-# factory_args overridden to raise max_batch_size (default 8 -> 64) and
-# max_batch_wait_ms (default 2 -> 5). This eliminates vocoder queueing when
-# many AR requests finish simultaneously on a large GPU (L40S).
-# mem_fraction_static is intentionally omitted: the Qwen3-TTS pipeline does not
-# expose a CLI/YAML mem_fraction target, so SGLang auto-picks a safe value.
+# The 0.6B model (~1.2 GB) has ~3x fewer params than 1.7B (~3.4 GB),
+# so prefill is faster. Combined with torch.compile disabled, this
+# gives the lowest possible time-to-first-token on a single GPU.
 
 config_cls: Qwen3TTSPipelineConfig
 model_path: Qwen/Qwen3-TTS-12Hz-0.6B-Base
@@ -22,6 +18,9 @@ stages:
     factory: sglang_omni.models.qwen3_tts.stages.create_sglang_tts_engine_executor
     factory_args:
       dtype: bfloat16
+      server_args_overrides:
+        enable_torch_compile: false
+        torch_compile_max_bs: 1
     gpu: 0
     next: vocoder
   - name: vocoder

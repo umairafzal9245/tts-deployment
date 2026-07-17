@@ -1,0 +1,33 @@
+# SGLang-Omni pipeline configuration for Qwen3-TTS 1.7B
+# Reference: https://github.com/sgl-project/sglang-omni/blob/main/examples/configs/qwen3_tts_1_7b.yaml
+#
+# Same 3-stage pipeline as the 0.6B model (preprocessing -> engine -> vocoder).
+# The 1.7B model (~3.4 GB bfloat16 weights) produces higher-quality speech.
+# Vocoder factory_args override defaults (max_batch_size 8->64, wait 2->5ms)
+# to eliminate vocoder queueing under concurrent load on L40S.
+
+config_cls: Qwen3TTSPipelineConfig
+model_path: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+relay_backend: shm
+
+stages:
+  - name: preprocessing
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_preprocessing_executor
+    next: tts_engine
+  - name: tts_engine
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_sglang_tts_engine_executor
+    factory_args:
+      dtype: bfloat16
+    gpu: 0
+    next: vocoder
+  - name: vocoder
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_vocoder_executor
+    factory_args:
+      dtype: bfloat16
+      max_batch_size: 64
+      max_batch_wait_ms: 5
+    gpu: 0
+    terminal: true

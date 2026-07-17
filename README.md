@@ -1,10 +1,10 @@
-# SGLang-Omni Qwen3-TTS 0.6B Production Deployment
+# SGLang-Omni Qwen3-TTS Production Deployment
 
-A production-ready, Docker-based deployment of the [SGLang-Omni](https://github.com/sgl-project/sglang-omni) Qwen3-TTS 0.6B text-to-speech server.
+A production-ready, Docker-based deployment of the [SGLang-Omni](https://github.com/sgl-project/sglang-omni) Qwen3-TTS text-to-speech server.
 
 ## Features
 
-- **Model**: `Qwen/Qwen3-TTS-12Hz-0.6B-Base`
+- **Model**: `Qwen/Qwen3-TTS-12Hz-1.7B-Base` (configurable — 0.6B also supported)
 - **Runtime**: SGLang-Omni multi-stage pipeline (preprocessing → TTS engine → vocoder)
 - **API**: OpenAI-compatible endpoints for speech generation, voice cloning, voice management, streaming, and batch processing
 - **Deployment**: Single-command Docker Compose on one GPU
@@ -82,7 +82,7 @@ A production-ready, Docker-based deployment of the [SGLang-Omni](https://github.
 
 4. **Wait for the server to become healthy.**
 
-   First startup downloads the model from Hugging Face (~1.2 GB), which can take several minutes depending on your connection. The startup timeout is 600 seconds by default.
+   First startup downloads the model from Hugging Face (~3.4 GB for 1.7B, ~1.2 GB for 0.6B), which can take several minutes depending on your connection. The startup timeout is 600 seconds by default.
 
    ```bash
    # Poll until healthy
@@ -113,13 +113,247 @@ A production-ready, Docker-based deployment of the [SGLang-Omni](https://github.
      -H "Content-Type: application/json" \
      -d '{
        "model": "qwen3-tts",
+       "voice": "default",
        "input": "Hello from Qwen3 TTS",
-       "ref_audio": "/app/sglang-omni/docs/_static/audio/ref_voice.wav",
-       "ref_text": "This is a reference voice sample.",
-       "response_format": "wav"
+       "references": [{
+         "audio_path": "/app/sglang-omni/docs/_static/audio/ref_voice.wav",
+         "text": "It was the night before my birthday. Hooray! It’s almost here! It may not be a holiday, but it’s the best day of the year."
+       }],
+       "language": "English",
+       "max_new_tokens": 256,
+       "repetition_penalty": 1.1
      }' \
      --output hello.wav
    ```
+
+   > **Important:** The `text` in `references` (or `ref_text`) must be the
+   > **actual transcript** of the reference audio. A mismatched transcript
+   > breaks in-context-learning conditioning and can cause runaway generation
+   > (up to ~170s of looping audio). Always bound `max_new_tokens` to a sane
+   > ceiling for your expected output length (12 codec tokens ≈ 1 second of
+   > audio). See [Generation Parameters](#generation-parameters) below.
+
+---
+
+## Quick Recipes
+
+The three most common tasks: generating audio with a named voice via
+streaming, cloning/removing voices, and listing all available voices.
+All examples use `curl` against a server running at `http://localhost:8000`.
+
+### 1. Generate Audio with a Named Voice (Streaming)
+
+Streaming returns chunked raw PCM audio (16-bit, mono, 24 kHz) as it is
+generated, so the client can start playback before the full utterance is
+done. Set `"stream": true` and `"response_format": "pcm"`.
+
+#### Using a preset voice (`default`)
+
+The `default` voice requires a reference audio + transcript to condition
+the base model. Pass them via `ref_audio` and `ref_text`:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-tts",
+    "input": "Hi, my name is Umair and I am from Mansehra.",
+    "voice": "default",
+    "response_format": "pcm",
+    "stream": true,
+    "sample_rate": 24000,
+    "ref_audio": "/app/sglang-omni/docs/_static/audio/ref_voice.wav",
+    "ref_text": "It was the night before my birthday. Hooray! It\u2019s almost here! It may not be a holiday, but it\u2019s the best day of the year.",
+    "max_new_tokens": 200,
+    "repetition_penalty": 1.1
+  }' \
+  --output stream.pcm
+```
+
+> **`ref_text` must match the reference audio transcript.** A mismatched
+> transcript breaks in-context-learning (ICL) conditioning and can cause
+> runaway generation. See [Generation Parameters](#generation-parameters).
+
+#### Using a cloned voice (by name)
+
+Once you have uploaded a voice (see [Clone a Voice](#2-clone-or-remove-a-voice)
+below), reference it by name — no `ref_audio`/`ref_text` needed:
+
+```bash
+curl -s -X POST http://localhost:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "qwen3-tts",
+    "input": "This is my cloned voice speaking.",
+    "voice": "my-voice",
+    "response_format": "pcm",
+    "stream": true,
+    "sample_rate": 24000,
+    "max_new_tokens": 200,
+    "repetition_penalty": 1.1
+  }' \
+  --output stream.pcm
+```
+
+#### Converting streamed PCM to WAV (Python)
+
+```python
+import wave
+
+with open("stream.pcm", "rb") as f:
+    pcm = f.read()
+
+with wave.open("stream.wav", "wb") as wf:
+    wf.setnchannels(1)       # mono
+    wf.setsampwidth(2)       # 16-bit
+    wf.setframerate(24000)   # 24 kHz
+    wf.writeframes(pcm)
+```
+
+#### Streaming with Python (real-time playback)
+
+```python
+import json
+import urllib.request
+
+payload = {
+    "model": "qwen3-tts",
+    "input": "Hi, my name is Umair and I am from Mansehra.",
+    "voice": "my-voice",
+    "response_format": "pcm",
+    "stream": True,
+    "sample_rate": 24000,
+    "max_new_tokens": 200,
+    "repetition_penalty": 1.1,
+}
+req = urllib.request.Request(
+    "http://localhost:8000/v1/audio/speech",
+    data=json.dumps(payload).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+
+with urllib.request.urlopen(req, timeout=120) as resp:
+    total = 0
+    while True:
+        chunk = resp.read(4096)
+        if not chunk:
+            break
+        total += len(chunk)
+        # Feed `chunk` to your audio player here (e.g. pyaudio stream).
+
+print(f"Received {total} bytes ({total / (24000 * 2):.2f}s of audio)")
+```
+
+---
+
+### 2. Clone or Remove a Voice
+
+#### Clone (upload) a new voice
+
+Upload an audio sample via `multipart/form-data` to create a named voice
+that can be reused in all future speech requests.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `audio_sample` | file | Yes | Audio file (WAV, MP3, FLAC, etc.) |
+| `name` | string | Yes | Unique name for the cloned voice |
+| `consent` | string | Yes | Consent confirmation (e.g. `"I have permission to clone this voice."`) |
+| `ref_text` | string | Recommended | Transcript of the reference audio (improves quality) |
+| `speaker_description` | string | No | Optional speaker description |
+
+```bash
+curl -s -X POST http://localhost:8000/v1/audio/voices \
+  -F "name=my-voice" \
+  -F "consent=I have permission to clone this voice." \
+  -F "ref_text=This is a reference voice sample for cloning." \
+  -F "audio_sample=@sample.wav"
+```
+
+**Response:**
+
+```json
+{
+  "name": "my-voice",
+  "consent": "I have permission to clone this voice.",
+  "created_at": 1784209788,
+  "file_size": 145964,
+  "mime_type": "audio/wav",
+  "ref_text": "This is a reference voice sample for cloning."
+}
+```
+
+> **Tip:** For best cloning quality, use a clean 5–15 second recording with
+> no background noise, and provide the exact transcript as `ref_text`.
+
+#### Remove (delete) a voice
+
+```bash
+curl -s -X DELETE http://localhost:8000/v1/audio/voices/my-voice
+```
+
+**Response (success):**
+
+```json
+{
+  "success": true,
+  "message": "Voice 'my-voice' deleted successfully"
+}
+```
+
+**Response (not found):**
+
+```json
+{
+  "success": false,
+  "error": "Voice 'my-voice' not found"
+}
+```
+
+---
+
+### 3. List All Voices (Preset + Cloned)
+
+```bash
+curl -s http://localhost:8000/v1/audio/voices | jq .
+```
+
+**Response:**
+
+```json
+{
+  "voices": ["default"],
+  "uploaded_voices": [
+    {
+      "name": "my-voice",
+      "consent": "I have permission to clone this voice.",
+      "created_at": 1784209788,
+      "file_size": 145964,
+      "mime_type": "audio/wav",
+      "ref_text": "This is a reference voice sample for cloning."
+    }
+  ],
+  "cache_stats": {
+    "entries": 0,
+    "memory_bytes": 0,
+    "max_bytes": 536870912,
+    "hit_count": 0,
+    "miss_count": 0
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `voices` | List of preset (built-in) voice names — always includes `"default"` |
+| `uploaded_voices` | List of cloned voices with metadata (name, size, transcript, etc.) |
+| `cache_stats` | Internal voice-reference cache statistics |
+
+To list only cloned voice names:
+
+```bash
+curl -s http://localhost:8000/v1/audio/voices | jq -r '.uploaded_voices[].name'
+```
 
 ---
 
@@ -267,13 +501,32 @@ Generates speech from text. The base model requires either a cloned voice (uploa
 | `stream` | boolean | No | `false` | If `true`, streams raw PCM chunks |
 | `speed` | float | No | `1.0` | Playback speed multiplier |
 | `ref_audio` | string | No | `null` | Path or URL to reference audio file |
-| `ref_text` | string | No | `null` | Transcript of the reference audio |
-| `language` | string | No | `null` | Language code (e.g., `"en"`, `"zh"`) |
+| `ref_text` | string | No | `null` | **Actual transcript** of the reference audio (must match!) |
+| `references` | array | No | `null` | List of `{audio_path, text}` — preferred form for cloning |
+| `language` | string | No | `"auto"` | Language hint: `English`, `Chinese`, `Japanese`, etc. |
 | `instructions` | string | No | `null` | Style/emotion instructions |
-| `temperature` | float | No | `null` | Sampling temperature |
-| `top_p` | float | No | `null` | Top-p sampling |
-| `top_k` | int | No | `null` | Top-k sampling |
+| `temperature` | float | No | `0.9` | Sampling temperature |
+| `top_p` | float | No | `1.0` | Top-p sampling |
+| `top_k` | int | No | `50` | Top-k sampling |
+| `repetition_penalty` | float | No | `1.05` | Repetition penalty (raise to `1.1` to suppress loops) |
+| `max_new_tokens` | int | No | `2048` | Max codec tokens (12 tokens ≈ 1s audio). **Bound this!** |
 | `seed` | int | No | `null` | Random seed for reproducibility |
+
+#### Generation Parameters
+
+Qwen3-TTS generates discrete codec tokens at **12 Hz** (12 tokens ≈ 1 second of
+audio). Key tuning tips:
+
+- **`max_new_tokens`**: The default is `2048` (~170s of audio). Always set this
+  to a sane ceiling for your expected output length to prevent runaway
+  generation. For example, a 10-second utterance needs ~120 tokens; set
+  `max_new_tokens: 256` as a safe bound.
+- **`repetition_penalty`**: The default `1.05` can allow repetition loops on
+  ~0.2% of utterances. Raising to `1.1` mitigates this with minimal quality
+  impact.
+- **`ref_text` / `references[].text`**: Must be the **actual transcript** of the
+  reference audio. A mismatched transcript breaks in-context-learning (ICL)
+  conditioning, degrades quality, and increases runaway-generation risk.
 
 **Example 1: Generate with a cloned voice**
 
@@ -296,9 +549,15 @@ curl -s -X POST http://localhost:8000/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
     "model": "qwen3-tts",
+    "voice": "default",
     "input": "Hello, this is a test of the text to speech system.",
-    "ref_audio": "/path/to/reference.wav",
-    "ref_text": "This is the transcript of the reference audio.",
+    "references": [{
+      "audio_path": "/app/sglang-omni/docs/_static/audio/ref_voice.wav",
+      "text": "It was the night before my birthday. Hooray! It’s almost here! It may not be a holiday, but it’s the best day of the year."
+    }],
+    "language": "English",
+    "max_new_tokens": 256,
+    "repetition_penalty": 1.1,
     "response_format": "wav"
   }' \
   --output output.wav
@@ -512,7 +771,8 @@ All configuration is done via environment variables in `.env`. See `.env.example
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SGLANG_OMNI_MODEL_PATH` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | Hugging Face model ID |
+| `SGLANG_OMNI_MODEL_PATH` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | Hugging Face model ID |
+| `SGLANG_OMNI_CONFIG` | `/app/config/qwen3_tts_1_7b.yaml` | Pipeline config YAML path |
 | `SGLANG_OMNI_PORT` | `8000` | Server port |
 | `SGLANG_OMNI_HOST` | `0.0.0.0` | Server bind address |
 | `SGLANG_OMNI_LOG_LEVEL` | `info` | Log level (`debug`, `info`, `warning`, `error`) |
@@ -551,7 +811,8 @@ make clean    # Remove containers, volumes, and image
 ├── logging.conf            # Python logging configuration
 ├── README.md               # This file
 ├── config/
-│   └── qwen3_tts_0_6b.yaml # SGLang-Omni pipeline config
+│   ├── qwen3_tts_0_6b.yaml # SGLang-Omni pipeline config (0.6B)
+│   └── qwen3_tts_1_7b.yaml # SGLang-Omni pipeline config (1.7B, default)
 ├── scripts/
 │   ├── start-server.sh     # Server startup wrapper
 │   ├── warmup.py           # Warmup request script
@@ -559,7 +820,9 @@ make clean    # Remove containers, volumes, and image
 │   ├── graceful-shutdown.sh # Shutdown handler
 │   └── generate-openapi.py # OpenAPI spec fetcher
 └── tests/
-    └── test_client.py      # Test client
+    ├── test_client.py      # Basic test client
+    ├── test_all.py         # Comprehensive test suite (voices, streaming, concurrency)
+    └── test_ttft_24.py     # Time-to-first-token benchmark (24 streams)
 ```
 
 ## Persistent Data

@@ -1,0 +1,36 @@
+# SGLang-Omni pipeline configuration for Qwen3-TTS 1.7B (TTFT-optimized)
+#
+# Disables torch.compile on the AR engine to eliminate first-request
+# compilation overhead and reduce time-to-first-token. torch.compile with
+# mode="max-autotune-no-cudagraphs" adds significant warmup time and can
+# increase first-token latency. Disabling it trades ~10-15% throughput
+# for faster first-token response.
+
+config_cls: Qwen3TTSPipelineConfig
+model_path: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+relay_backend: shm
+
+stages:
+  - name: preprocessing
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_preprocessing_executor
+    next: tts_engine
+  - name: tts_engine
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_sglang_tts_engine_executor
+    factory_args:
+      dtype: bfloat16
+      server_args_overrides:
+        enable_torch_compile: false
+        torch_compile_max_bs: 1
+    gpu: 0
+    next: vocoder
+  - name: vocoder
+    process: pipeline
+    factory: sglang_omni.models.qwen3_tts.stages.create_vocoder_executor
+    factory_args:
+      dtype: bfloat16
+      max_batch_size: 64
+      max_batch_wait_ms: 5
+    gpu: 0
+    terminal: true

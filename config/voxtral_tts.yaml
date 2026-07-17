@@ -1,0 +1,7 @@
+# SGLang-Omni pipeline config for Voxtral TTS (4B)
+# Non-streaming pipeline (no stream_to on vocoder).
+# Model: mistralai/Voxtral-4B-TTS-2603
+
+config_cls: VoxtralTTSPipelineConfig
+model_path: mistralai/Voxtral-4B-TTS-2603
+relay_backend: shm

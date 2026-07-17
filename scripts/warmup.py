@@ -15,6 +15,13 @@ import urllib.error
 BASE_URL = os.environ.get("SGLANG_OMNI_WARMUP_URL", "http://localhost:8000")
 TIMEOUT = int(os.environ.get("SGLANG_OMNI_WARMUP_TIMEOUT", "300"))
 REF_AUDIO = "/app/sglang-omni/docs/_static/audio/ref_voice.wav"
+# The transcript MUST match the reference audio. A mismatched ref_text breaks
+# in-context-learning (ICL) conditioning and can trigger runaway generation.
+# This is the actual transcript of docs/_static/audio/ref_voice.wav.
+REF_TEXT = (
+    "It was the night before my birthday. Hooray! It’s almost here! "
+    "It may not be a holiday, but it’s the best day of the year."
+)
 
 
 def wait_for_health(timeout: int = TIMEOUT) -> bool:
@@ -45,7 +52,12 @@ def send_warmup_tts() -> None:
         "voice": "default",
         "response_format": "wav",
         "ref_audio": REF_AUDIO,
-        "ref_text": "This is a reference voice sample.",
+        "ref_text": REF_TEXT,
+        # Bound generation so a warmup request can never run away to the
+        # 2048-token default (~170s of audio). 256 tokens ~= 21s ceiling.
+        "max_new_tokens": 256,
+        # Slightly above the 1.05 default to suppress repetition loops.
+        "repetition_penalty": 1.1,
     }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
